@@ -7,7 +7,7 @@ import os
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 
-from pytorch_msssim import ssim, ms_ssim
+from pytorch_msssim_ag import ssim, ms_ssim
 import torch
 
 

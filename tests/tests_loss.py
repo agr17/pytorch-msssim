@@ -8,7 +8,7 @@ import numpy as np
 import sys, os
 import torch.nn.functional as F
 sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
-from pytorch_msssim import ssim, ms_ssim, SSIM, MS_SSIM
+from pytorch_msssim_ag import ssim, ms_ssim, SSIM, MS_SSIM
 npImg1 = np.array(Image.open("einstein.png"))
 
 img1 = torch.from_numpy(npImg1).float().unsqueeze(0).unsqueeze(0)/255.0

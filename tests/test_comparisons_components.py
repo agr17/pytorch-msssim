@@ -9,7 +9,7 @@ os.environ['CUDA_VISIBLE_DEVICES']='' # disable CUDA for tf
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 
-from pytorch_msssim_ag import ssim, ms_ssim
+from pytorch_msssim_ag import ssim_components, ms_ssim
 import torch
 import tensorflow as tf
 
@@ -61,15 +61,15 @@ if __name__ == '__main__':
 
         begin = time.time()
         for _ in range(N_repeat):
-            ssim_torch = ssim(img_noise_torch, img_torch, win_size=11, data_range=255)
+            ssim_torch, l, c, s = ssim_components(img_noise_torch, img_torch, win_size=11, data_range=255)
         time_torch = (time.time()-begin) / N_repeat
 
         ssim_torch = ssim_torch.numpy()
         single_image_ssim.append(ssim_torch)
         ssim_tf = ssim_tf.numpy()
 
-        print("sigma=%.1f ssim_skimage=%.6f (%.4f ms), ssim_tf=%.6f (%.4f ms), ssim_torch=%.6f (%.4f ms)" % (
-            sigma, ssim_skimage, time_skimage*1000, ssim_tf, time_tf*1000, ssim_torch, time_torch*1000))
+        print("sigma=%.1f ssim_skimage=%.6f (%.4f ms), ssim_tf=%.6f (%.4f ms), ssim_torch=%.6f (%.4f ms), (l,c, s) = (%.6f, %.6f, %.6f)" % (
+            sigma, ssim_skimage, time_skimage*1000, ssim_tf, time_tf*1000, ssim_torch, time_torch*1000, l, c, s))
         assert (np.allclose(ssim_torch, ssim_skimage, atol=5e-4))
         assert (np.allclose(ssim_torch, ssim_tf, atol=5e-4))
 
@@ -78,7 +78,7 @@ if __name__ == '__main__':
     print("====> Batch")
     img_batch = torch.cat(img_batch, dim=0)
     img_noise_batch = torch.cat(img_noise_batch, dim=0)
-    ssim_batch = ssim(img_noise_batch, img_batch, win_size=11,size_average=False, data_range=255)
+    ssim_batch, _, _, _ = ssim_components(img_noise_batch, img_batch, win_size=11,size_average=False, data_range=255)
     assert np.allclose(ssim_batch, single_image_ssim, atol=5e-4)
     print("Pass!")
 

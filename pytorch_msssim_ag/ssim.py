@@ -67,6 +67,9 @@ def _ssim(X, Y, data_range, win, size_average=True, K=(0.01, 0.03)):
 
     Returns:
         torch.Tensor: ssim results.
+        torch.Tensor: luminance results.
+        torch.Tensor: contrast results.
+        torch.Tensor: structure results.
     """
     K1, K2 = K
     # batch, channel, [depth,] height, width = X.shape
@@ -74,8 +77,13 @@ def _ssim(X, Y, data_range, win, size_average=True, K=(0.01, 0.03)):
 
     C1 = (K1 * data_range) ** 2
     C2 = (K2 * data_range) ** 2
+    C3 = C2 / 2
 
     win = win.to(X.device, dtype=X.dtype)
+
+    ################################################################################
+    # First component of SSIM (luminance)
+    ################################################################################
 
     mu1 = gaussian_filter(X, win)
     mu2 = gaussian_filter(Y, win)
@@ -84,17 +92,83 @@ def _ssim(X, Y, data_range, win, size_average=True, K=(0.01, 0.03)):
     mu2_sq = mu2.pow(2)
     mu1_mu2 = mu1 * mu2
 
+    l_map = ((2 * mu1_mu2 + C1) / (mu1_sq + mu2_sq + C1))
+
+    ################################################################################
+    # Second component of SSIM (contrast)
+    ################################################################################
+
     sigma1_sq = compensation * (gaussian_filter(X * X, win) - mu1_sq)
     sigma2_sq = compensation * (gaussian_filter(Y * Y, win) - mu2_sq)
     sigma12 = compensation * (gaussian_filter(X * Y, win) - mu1_mu2)
 
-    cs_map = (2 * sigma12 + C2) / (sigma1_sq + sigma2_sq + C2)  # set alpha=beta=gamma=1
-    ssim_map = ((2 * mu1_mu2 + C1) / (mu1_sq + mu2_sq + C1)) * cs_map
+    sigma1 = sigma1_sq.sqrt()
+    sigma2 = sigma2_sq.sqrt()
+
+    c_map = (2 * sigma1 * sigma2 + C2) / (sigma1_sq + sigma2_sq + C2)
+
+    ################################################################################
+    # Third component of SSIM (structure)
+    ################################################################################
+
+    s_map = (sigma12 + C3) / (sigma1 * sigma2 + C3)
+
+    ################################################################################
+    # SSIM index
+    ################################################################################
+
+    ssim_map = l_map * c_map * s_map
 
     ssim_per_channel = torch.flatten(ssim_map, 2).mean(-1)
-    cs = torch.flatten(cs_map, 2).mean(-1)
-    return ssim_per_channel, cs
+    l = torch.flatten(l_map, 2).mean(-1)
+    c = torch.flatten(c_map, 2).mean(-1)
+    s = torch.flatten(s_map, 2).mean(-1)
+    return ssim_per_channel, l, c, s
 
+
+def _general_ssim(
+    X,
+    Y,
+    data_range=255,
+    size_average=True,
+    win_size=11,
+    win_sigma=1.5,
+    win=None,
+    K=(0.01, 0.03),
+    nonnegative_ssim=False,
+):
+    
+    if not X.shape == Y.shape:
+        raise ValueError("Input images should have the same dimensions.")
+
+    for d in range(len(X.shape) - 1, 1, -1):
+        X = X.squeeze(dim=d)
+        Y = Y.squeeze(dim=d)
+
+    if len(X.shape) not in (4, 5):
+        raise ValueError(f"Input images should be 4-d or 5-d tensors, but got {X.shape}")
+
+    if not X.type() == Y.type():
+        raise ValueError("Input images should have the same dtype.")
+
+    if win is not None:  # set win_size
+        win_size = win.shape[-1]
+
+    if not (win_size % 2 == 1):
+        raise ValueError("Window size should be odd.")
+
+    if win is None:
+        win = _fspecial_gauss_1d(win_size, win_sigma)
+        win = win.repeat([X.shape[1]] + [1] * (len(X.shape) - 1))
+
+    ssim_per_channel, l, c, s = _ssim(X, Y, data_range=data_range, win=win, size_average=False, K=K)
+    if nonnegative_ssim:
+        ssim_per_channel = torch.relu(ssim_per_channel)
+
+    if size_average:
+        return ssim_per_channel.mean(), l.mean(), c.mean(), s.mean()
+    else:
+        return ssim_per_channel.mean(1), l.mean(1), c.mean(1), s.mean(1)
 
 def ssim(
     X,
@@ -122,38 +196,62 @@ def ssim(
     Returns:
         torch.Tensor: ssim results
     """
-    if not X.shape == Y.shape:
-        raise ValueError("Input images should have the same dimensions.")
 
-    for d in range(len(X.shape) - 1, 1, -1):
-        X = X.squeeze(dim=d)
-        Y = Y.squeeze(dim=d)
+    ssim, _, _, _ = _general_ssim(
+        X,
+        Y,
+        data_range=data_range,
+        size_average=size_average,
+        win_size=win_size,
+        win_sigma=win_sigma,
+        win=win,
+        K=K,
+        nonnegative_ssim=nonnegative_ssim,
+    )
+    return ssim
 
-    if len(X.shape) not in (4, 5):
-        raise ValueError(f"Input images should be 4-d or 5-d tensors, but got {X.shape}")
+def ssim_components(
+    X,
+    Y,
+    data_range=255,
+    size_average=True,
+    win_size=11,
+    win_sigma=1.5,
+    win=None,
+    K=(0.01, 0.03),
+    nonnegative_ssim=False,
+):
+    r""" interface of ssim_components
+    Args:
+        X (torch.Tensor): a batch of images, (N,C,H,W)
+        Y (torch.Tensor): a batch of images, (N,C,H,W)
+        data_range (float or int, optional): value range of input images. (usually 1.0 or 255)
+        size_average (bool, optional): if size_average=True, ssim of all images will be averaged as a scalar
+        win_size: (int, optional): the size of gauss kernel
+        win_sigma: (float, optional): sigma of normal distribution
+        win (torch.Tensor, optional): 1-D gauss kernel. if None, a new kernel will be created according to win_size and win_sigma
+        K (list or tuple, optional): scalar constants (K1, K2). Try a larger K2 constant (e.g. 0.4) if you get a negative or NaN results.
+        nonnegative_ssim (bool, optional): force the ssim response to be nonnegative with relu
 
-    if not X.type() == Y.type():
-        raise ValueError("Input images should have the same dtype.")
-
-    if win is not None:  # set win_size
-        win_size = win.shape[-1]
-
-    if not (win_size % 2 == 1):
-        raise ValueError("Window size should be odd.")
-
-    if win is None:
-        win = _fspecial_gauss_1d(win_size, win_sigma)
-        win = win.repeat([X.shape[1]] + [1] * (len(X.shape) - 1))
-
-    ssim_per_channel, cs = _ssim(X, Y, data_range=data_range, win=win, size_average=False, K=K)
-    if nonnegative_ssim:
-        ssim_per_channel = torch.relu(ssim_per_channel)
-
-    if size_average:
-        return ssim_per_channel.mean()
-    else:
-        return ssim_per_channel.mean(1)
-
+    Returns:
+        torch.Tensor: ssim results
+        torch.Tensor: luminance results.
+        torch.Tensor: contrast results.
+        torch.Tensor: structure results.
+    """
+    return _general_ssim(
+        X,
+        Y,
+        data_range=data_range,
+        size_average=size_average,
+        win_size=win_size,
+        win_sigma=win_sigma,
+        win=win,
+        K=K,
+        nonnegative_ssim=nonnegative_ssim,
+    )
+    
+# TODO: aplly previud work to ms-ssim    
 
 def ms_ssim(
     X, Y, data_range=255, size_average=True, win_size=11, win_sigma=1.5, win=None, weights=None, K=(0.01, 0.03)

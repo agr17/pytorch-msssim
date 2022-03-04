@@ -8,7 +8,7 @@ from datasets import ImageDataset
 from torchvision import transforms
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
-from pytorch_msssim import MS_SSIM, ms_ssim, SSIM, ssim
+from pytorch_msssim_ag import MS_SSIM, ms_ssim, SSIM, ssim
 
 import torch
 import torch.nn.functional as F
